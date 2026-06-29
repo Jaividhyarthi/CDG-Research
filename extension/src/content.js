@@ -309,13 +309,46 @@
   function getSignals() {
     const input = document.querySelector(sel.input);
     const qLen  = input ? (input.innerText || input.value || '').length : 0;
-    return {
+
+    // ── Activity decay ─────────────────────────────────────────────────
+    // If user has been inactive, decay signals back toward autonomous baseline
+    const now = Date.now();
+    const timeSinceKey    = state.lastKeyTime    ? now - state.lastKeyTime    : 999999;
+    const timeSinceSubmit = state.lastSubmitTime ? now - state.lastSubmitTime : 999999;
+    const timeSinceActive = Math.min(timeSinceKey, timeSinceSubmit);
+
+    // Decay factor: 0.0 (fully active) → 1.0 (fully idle after 5 min)
+    const DECAY_START_MS = 60000;   // decay starts after 60s idle
+    const DECAY_FULL_MS  = 300000;  // fully decayed after 5 min idle
+    const decayFactor = timeSinceActive < DECAY_START_MS ? 0.0 :
+      Math.min(1.0, (timeSinceActive - DECAY_START_MS) / (DECAY_FULL_MS - DECAY_START_MS));
+
+    // Autonomous baseline values (what a non-dependent user looks like)
+    const BASELINE = { PQAR:0.80, QCS:0.60, TTQ:0.65, ARWM:0.05, RET:0.75, OCR:0.35 };
+
+    // Raw computed signals
+    const raw = {
       PQAR: computePQAR(),
       QCS:  computeQCS(qLen),
       TTQ:  computeTTQ(),
       ARWM: computeARWM(),
       RET:  computeRET(),
       OCR:  computeOCR(),
+    };
+
+    // Apply decay: signal moves toward baseline as idle time increases
+    const decayed = {};
+    for (const k of Object.keys(raw)) {
+      decayed[k] = raw[k] + decayFactor * (BASELINE[k] - raw[k]);
+    }
+
+    return {
+      PQAR: decayed.PQAR,
+      QCS:  decayed.QCS,
+      TTQ:  decayed.TTQ,
+      ARWM: decayed.ARWM,
+      RET:  decayed.RET,
+      OCR:  decayed.OCR,
       TSD:  computeTSD(),
       TER:  computeTER(),
       QIC:  computeQIC(),
@@ -325,11 +358,12 @@
         responseCount: state.responseCount,
         copyCount:     state.copyCount,
         calibrated:    state.calibrated,
-        sessionMs:     Date.now() - state.sessionStart,
+        sessionMs:     now - state.sessionStart,
+        decayFactor:   Math.round(decayFactor * 100),
+        idleSecs:      Math.round(timeSinceActive / 1000),
       }
     };
   }
-
   // Push signals to background every 60 seconds
   setInterval(() => {
     try {

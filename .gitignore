@@ -1,1 +1,4 @@
 venv/
+
+simulation/data/SYN_*.csv
+simulation/__pycache__/

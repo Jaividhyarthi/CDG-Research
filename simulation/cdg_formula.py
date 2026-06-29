@@ -98,12 +98,15 @@ def compute_drift_rate(cdg_current, cdg_prev, dt):
 
 
 # ── Inflection Point ──────────────────────────────────────────────────────────
-def detect_inflection_point(dr_current, dr_prev, dt):
+def detect_inflection_point(dr_current, dr_prev, dt, cdg_current=0.0, min_cdg=0.40):
     """
-    IP when d²CDG/dt² changes sign from negative to positive.
+    IP when d²CDG/dt² changes sign from negative to positive,
+    AND CDG is already above min_cdg (prevents noise-driven false positives).
     Returns True if inflection point detected at this tick.
     """
     if dt <= 0:
+        return False
+    if cdg_current < min_cdg:
         return False
     d2 = (dr_current - dr_prev) / dt
     return dr_prev <= 0 < d2
@@ -142,7 +145,7 @@ def run_tests():
     sigs = {'PQAR': 0.5, 'QCS': 0.5, 'TTQ': 0.5, 'ARWM': 0.5, 'RET': 0.5, 'OCR': 0.5}
     cdg = compute_cdg(sigs, sfi=2.0)
     check("All signals at 0.5 + SFI=2.0 → CDG = 1.0", abs(cdg - 1.0) < 1e-9, f"got {cdg}")
-    
+
     # Test 3: CDG always bounded [0, 1]
     for _ in range(1000):
         sigs = {k: np.random.random() for k in WEIGHTS}

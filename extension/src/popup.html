@@ -1,241 +1,188 @@
-/**
- * CDG popup.js — Dashboard UI logic
- */
-
-const ZONE_COLORS = {
-  low:      '#10b981',
-  moderate: '#3b82f6',
-  high:     '#f59e0b',
-  critical: '#ef4444',
-};
-
-const SIGNALS = ['PQAR','QCS','TTQ','ARWM','RET','OCR'];
-const WEIGHTS = {PQAR:0.20,QCS:0.15,TTQ:0.10,ARWM:0.25,RET:0.15,OCR:0.15};
-
-function showTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.querySelector(`[onclick="showTab('${name}')"]`).classList.add('active');
-  document.getElementById(`panel-${name}`).classList.add('active');
-}
-
-async function loadData() {
-  const data = await chrome.storage.local.get(null);
-
-  const hasData = data.cdgHistory && data.cdgHistory.length > 0;
-
-  document.getElementById('no-data').style.display    = hasData ? 'none' : 'block';
-  document.getElementById('tabs').style.display        = hasData ? 'flex' : 'none';
-  document.getElementById('footer').style.display      = hasData ? 'flex' : 'none';
-  document.getElementById('score-section').style.opacity = hasData ? '1' : '0.4';
-
-  if (!hasData) return;
-
-  const cdg  = data.cdgCurrent  || 0;
-  const sfi  = data.sfiCurrent  || 1;
-  const dr   = data.drCurrent   || 0;
-  const zone = data.zoneCurrent || 'low';
-  const tick = data.tick        || 0;
-  const zc   = ZONE_COLORS[zone] || ZONE_COLORS.low;
-
-  // Platform
-  const raw = data.signalsRaw || {};
-  document.getElementById('platform-badge').textContent =
-    (raw.meta && raw.meta.platform) ? raw.meta.platform.toUpperCase() : 'CDG';
-
-  // Score circle
-  const circle = document.getElementById('score-circle');
-  circle.style.borderColor = zc;
-  document.getElementById('score-num').textContent  = cdg.toFixed(3);
-  document.getElementById('score-num').style.color  = zc;
-  document.getElementById('score-zone').textContent = zone.toUpperCase();
-  document.getElementById('score-zone').style.color = zc;
-
-  // CDG bar
-  const bar = document.getElementById('cdg-bar');
-  bar.style.width      = (cdg * 100) + '%';
-  bar.style.background = zc;
-  document.getElementById('cdg-pct').textContent = (cdg * 100).toFixed(1) + '%';
-
-  // Metrics
-  document.getElementById('sfi-val').textContent  = sfi.toFixed(2);
-  document.getElementById('dr-val').textContent   = (dr >= 0 ? '+' : '') + dr.toFixed(3);
-  document.getElementById('dr-val').style.color   = dr > 0.005 ? '#ef4444' : dr < -0.005 ? '#10b981' : '#3b82f6';
-  document.getElementById('tick-val').textContent = tick;
-
-  // CDG chart
-  drawChart(data.cdgHistory || []);
-
-  // Signals
-  renderSignals(data.signalsNorm || {}, data.tick || 0);
-
-  // Events
-  renderEvents(data.ipEvents || [], data.alertEvents || []);
-
-  // Stats
-  renderStats(data);
-}
-
-function drawChart(history) {
-  const canvas = document.getElementById('cdg-chart');
-  const ctx    = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#111827';
-  ctx.fillRect(0, 0, W, H);
-
-  if (history.length < 2) return;
-
-  // Zone bands
-  const zones = [
-    {lo:0.8, hi:1.0, color:'rgba(239,68,68,0.08)'},
-    {lo:0.6, hi:0.8, color:'rgba(245,158,11,0.06)'},
-    {lo:0.3, hi:0.6, color:'rgba(59,130,246,0.05)'},
-    {lo:0.0, hi:0.3, color:'rgba(16,185,129,0.05)'},
-  ];
-  zones.forEach(({lo, hi, color}) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(0, H*(1-hi), W, H*(hi-lo));
-  });
-
-  // Alert line
-  ctx.setLineDash([4,4]);
-  ctx.strokeStyle = 'rgba(239,68,68,0.4)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, H*0.4);
-  ctx.lineTo(W, H*0.4);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // CDG curve
-  ctx.beginPath();
-  ctx.strokeStyle = '#8b5cf6';
-  ctx.lineWidth = 2;
-  history.forEach((v, i) => {
-    const x = (i / Math.max(history.length-1, 1)) * W;
-    const y = H - (v * H);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  // Fill under curve
-  ctx.beginPath();
-  history.forEach((v, i) => {
-    const x = (i / Math.max(history.length-1, 1)) * W;
-    const y = H - (v * H);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
-  ctx.fillStyle = 'rgba(139,92,246,0.12)';
-  ctx.fill();
-
-  // Current point
-  const lastVal = history[history.length-1];
-  const cx = W - 4;
-  const cy = H - (lastVal * H);
-  ctx.beginPath();
-  ctx.arc(cx, cy, 4, 0, Math.PI*2);
-  ctx.fillStyle = ZONE_COLORS[getZone(lastVal)];
-  ctx.fill();
-}
-
-function getZone(v) {
-  if (v >= 0.8) return 'critical';
-  if (v >= 0.6) return 'high';
-  if (v >= 0.3) return 'moderate';
-  return 'low';
-}
-
-function renderSignals(norm, tick) {
-  const calBanner = document.getElementById('cal-banner');
-  calBanner.style.display = tick < 10 ? 'block' : 'none';
-
-  const list = document.getElementById('signals-list');
-  list.innerHTML = '';
-
-  SIGNALS.forEach(k => {
-    const val = norm[k] || 0;
-    const color = val > 0.6 ? '#ef4444' : val > 0.3 ? '#f59e0b' : '#10b981';
-    const row = document.createElement('div');
-    row.className = 'signal-row';
-    row.innerHTML = `
-      <span class="signal-name">${k}</span>
-      <div class="signal-bar-track">
-        <div class="signal-bar-fill" style="width:${val*100}%;background:${color}"></div>
-      </div>
-      <span class="signal-val" style="color:${color}">${val.toFixed(2)}</span>
-      <span class="signal-w">w=${WEIGHTS[k]}</span>
-    `;
-    list.appendChild(row);
-  });
-}
-
-function renderEvents(ipEvents, alertEvents) {
-  const list = document.getElementById('events-list');
-  list.innerHTML = '';
-
-  const all = [
-    ...ipEvents.map(t    => ({t, type:'ip',    label:`t=${t} min — Inflection Point detected`})),
-    ...alertEvents.map(t => ({t, type:'alert', label:`t=${t} min — Alert: CDG crossed 0.60`})),
-  ].sort((a,b) => b.t - a.t);
-
-  if (!all.length) {
-    list.innerHTML = '<div class="event-empty">No events yet. Monitoring...</div>';
-    return;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CDG Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f1a; --surface: #111827; --card: #1a2235;
+    --border: #1e2d45; --accent: #8b5cf6; --accent2: #06b6d4;
+    --green: #10b981; --red: #ef4444; --gold: #f59e0b; --blue: #3b82f6;
+    --text: #e2e8f0; --muted: #64748b; --soft: #94a3b8;
   }
-  all.forEach(({type, label}) => {
-    const div = document.createElement('div');
-    div.className = `event-item event-${type}`;
-    div.textContent = label;
-    list.appendChild(div);
-  });
-}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 380px; min-height: 520px;
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+  }
+  .header {
+    background: linear-gradient(135deg, #0b0f1a, #130f2a);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px 10px;
+  }
+  .header-top { display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.05em; }
+  .platform-badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(139,92,246,0.15); color: var(--accent);
+    border: 1px solid rgba(139,92,246,0.3);
+  }
+  .formula {
+    font-size: 9px; color: var(--muted); font-family: monospace;
+    margin-top: 4px; line-height: 1.4;
+  }
+  .score-section {
+    padding: 14px; background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px;
+  }
+  .score-circle {
+    width: 72px; height: 72px; border-radius: 50%;
+    border: 3px solid var(--accent);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .score-num { font-size: 20px; font-weight: 700; line-height: 1; }
+  .score-zone { font-size: 9px; font-weight: 600; letter-spacing: 0.06em; margin-top: 2px; }
+  .score-right { flex: 1; }
+  .score-bar-wrap { margin-bottom: 6px; }
+  .score-bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+  .bar-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s, background 0.5s; }
+  .metrics-row { display: flex; gap: 8px; margin-top: 8px; }
+  .metric-pill {
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 6px; text-align: center;
+  }
+  .metric-pill .val { font-size: 12px; font-weight: 700; }
+  .metric-pill .lbl { font-size: 9px; color: var(--muted); margin-top: 1px; }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tab {
+    flex: 1; padding: 8px 4px; text-align: center;
+    font-size: 11px; font-weight: 500; color: var(--muted);
+    cursor: pointer; border-bottom: 2px solid transparent;
+    transition: all 0.15s; background: none;
+    border-top: none; border-left: none; border-right: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panel { display: none; padding: 12px 14px; }
+  .panel.active { display: block; }
+  .signal-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .signal-name { font-size: 10px; color: var(--soft); width: 44px; flex-shrink: 0; }
+  .signal-bar-track { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .signal-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+  .signal-val { font-size: 10px; color: var(--text); font-weight: 600; width: 30px; text-align: right; }
+  .signal-w { font-size: 9px; color: var(--muted); width: 28px; }
+  canvas { display: block; border-radius: 6px; background: var(--surface); }
+  .event-item { padding: 6px 8px; border-radius: 6px; margin-bottom: 5px; font-size: 11px; font-family: monospace; }
+  .event-ip    { background: rgba(245,158,11,0.08); color: var(--gold); border: 1px solid rgba(245,158,11,0.2); }
+  .event-alert { background: rgba(239,68,68,0.08);  color: var(--red);  border: 1px solid rgba(239,68,68,0.2); }
+  .event-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 20px 0; }
+  .stat-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(30,45,69,0.4); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--muted); font-size: 11px; }
+  .stat-val   { color: var(--text);  font-size: 11px; font-weight: 600; }
+  .footer {
+    padding: 8px 14px; border-top: 1px solid var(--border);
+    display: flex; gap: 6px;
+  }
+  .btn {
+    flex: 1; padding: 6px; border-radius: 6px; font-size: 11px;
+    font-weight: 600; cursor: pointer; border: none;
+    transition: opacity 0.2s; font-family: inherit;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-secondary { background: var(--card); color: var(--soft); border: 1px solid var(--border); }
+  .btn-danger { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+  .cal-banner {
+    background: rgba(6,182,212,0.08); border: 1px solid rgba(6,182,212,0.25);
+    border-radius: 6px; padding: 7px 10px; margin-bottom: 10px;
+    font-size: 10px; color: var(--accent2); text-align: center;
+  }
+  .no-data { text-align: center; padding: 30px 14px; color: var(--muted); font-size: 12px; }
+  .no-data .icon { font-size: 28px; margin-bottom: 8px; opacity: 0.4; }
+</style>
+</head>
+<body>
 
-function renderStats(data) {
-  const h   = data.cdgHistory || [];
-  const raw = (data.signalsRaw && data.signalsRaw.meta) || {};
-  const list = document.getElementById('stats-list');
-  const stats = [
-    ['Session time',    `${data.tick || 0} minutes`],
-    ['CDG current',     (data.cdgCurrent || 0).toFixed(4)],
-    ['CDG mean',        h.length ? (h.reduce((a,b)=>a+b)/h.length).toFixed(4) : '—'],
-    ['CDG max',         h.length ? Math.max(...h).toFixed(4) : '—'],
-    ['SFI',             (data.sfiCurrent || 1).toFixed(3)],
-    ['Zone',            (data.zoneCurrent || '—').toUpperCase()],
-    ['IP events',       (data.ipEvents || []).length],
-    ['Alerts',          (data.alertEvents || []).length],
-    ['Queries',         raw.queryCount || 0],
-    ['Copies detected', raw.copyCount  || 0],
-    ['Calibrated',      raw.calibrated ? 'Yes' : 'No (first 10 min)'],
-    ['Platform',        raw.platform   || '—'],
-  ];
-  list.innerHTML = stats.map(([l,v]) =>
-    `<div class="stat-row">
-       <span class="stat-label">${l}</span>
-       <span class="stat-val">${v}</span>
-     </div>`
-  ).join('');
-}
+<div class="header">
+  <div class="header-top">
+    <h1>CDG — Cognitive Dependency Gradient</h1>
+    <span class="platform-badge" id="platform-badge">—</span>
+  </div>
+  <div class="formula">CDG(t) = SFI(t) x [w1·PQAR' + w2·QCS' + w3·TTQ' + w4·ARWM + w5·RET' + w6·OCR']</div>
+</div>
 
-async function exportSession() {
-  const data = await chrome.storage.local.get(null);
-  const sid  = `CDG_EXT_${new Date().toISOString().replace(/[:.]/g,'_')}`;
-  const blob = new Blob([JSON.stringify({session_id: sid, ...data}, null, 2)],
-                        {type: 'application/json'});
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = `${sid}.json`; a.click();
-  URL.revokeObjectURL(url);
-}
+<div class="score-section" id="score-section">
+  <div class="score-circle" id="score-circle">
+    <div class="score-num" id="score-num">—</div>
+    <div class="score-zone" id="score-zone">LOADING</div>
+  </div>
+  <div class="score-right">
+    <div class="score-bar-wrap">
+      <div class="score-bar-label"><span>Dependency level</span><span id="cdg-pct">—</span></div>
+      <div class="bar-track"><div class="bar-fill" id="cdg-bar" style="width:0%"></div></div>
+    </div>
+    <div class="metrics-row">
+      <div class="metric-pill">
+        <div class="val" id="sfi-val">—</div>
+        <div class="lbl">SFI</div>
+      </div>
+      <div class="metric-pill">
+        <div class="val" id="dr-val">—</div>
+        <div class="lbl">DR</div>
+      </div>
+      <div class="metric-pill">
+        <div class="val" id="tick-val">—</div>
+        <div class="lbl">min</div>
+      </div>
+    </div>
+  </div>
+</div>
 
-async function resetSession() {
-  if (!confirm('Reset CDG session? All current data will be cleared.')) return;
-  await chrome.runtime.sendMessage({type: 'RESET_SESSION'});
-  await chrome.storage.local.clear();
-  loadData();
-}
+<div class="no-data" id="no-data">
+  <div class="icon">📊</div>
+  <div>No session data yet.</div>
+  <div style="margin-top:6px;font-size:11px">Open claude.ai and start working.</div>
+  <div style="margin-top:4px;font-size:10px;color:#334155">CDG calibrates in the first 10 minutes.</div>
+</div>
 
-// Load on open and refresh every 5 seconds
-loadData();
-setInterval(loadData, 5000);
+<div class="tabs" id="tabs" style="display:none">
+  <button class="tab active" onclick="showTab('live')">Live</button>
+  <button class="tab" onclick="showTab('signals')">Signals</button>
+  <button class="tab" onclick="showTab('events')">Events</button>
+  <button class="tab" onclick="showTab('stats')">Stats</button>
+</div>
+
+<div class="panel active" id="panel-live">
+  <canvas id="cdg-chart" width="352" height="120"></canvas>
+</div>
+
+<div class="panel" id="panel-signals">
+  <div id="cal-banner" class="cal-banner" style="display:none">
+    Calibrating... CDG uses population bounds for first 10 minutes.
+  </div>
+  <div id="signals-list"></div>
+</div>
+
+<div class="panel" id="panel-events">
+  <div id="events-list"></div>
+</div>
+
+<div class="panel" id="panel-stats">
+  <div id="stats-list"></div>
+</div>
+
+<div class="footer" id="footer" style="display:none">
+  <button class="btn btn-secondary" onclick="exportSession()">Export JSON</button>
+  <button class="btn btn-danger"    onclick="resetSession()">Reset</button>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

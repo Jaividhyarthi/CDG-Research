@@ -332,20 +332,26 @@
 
   // Push signals to background every 60 seconds
   setInterval(() => {
-    const signals = getSignals();
-    chrome.runtime.sendMessage({
-      type:    'CDG_SIGNALS',
-      signals: signals,
-      ts:      Date.now(),
-    }).catch(() => {}); // ignore if background not ready
+    try {
+      if (!chrome.runtime?.id) return; // context invalidated check
+      const signals = getSignals();
+      chrome.runtime.sendMessage({
+        type:    'CDG_SIGNALS',
+        signals: signals,
+        ts:      Date.now(),
+      }).catch(() => {});
+    } catch(e) { /* context invalidated — ignore */ }
   }, 60000);
 
   // Also push on demand
-  chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-    if (msg.type === 'GET_SIGNALS') {
-      respond(getSignals());
-    }
-  });
+  try {
+    chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+      if (msg.type === 'GET_SIGNALS') {
+        respond(getSignals());
+        return true;
+      }
+    });
+  } catch(e) { /* context invalidated — ignore */ }
 
   // Init
   attachSubmitListeners();

@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "CDG — Cognitive Dependency Gradient",
+  "version": "1.0.0",
+  "description": "Real-time measurement of cognitive autonomy drift during AI sessions. Research tool — SRM Valliammai / Team Synthara.",
+
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "activeTab"
+  ],
+
+  "host_permissions": [
+    "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*"
+  ],
+
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "CDG Dashboard"
+  },
+
+  "icons": {
+    "16":  "assets/icon16.png",
+    "48":  "assets/icon48.png",
+    "128": "assets/icon128.png"
+  }
+}

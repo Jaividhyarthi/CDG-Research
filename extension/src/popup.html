@@ -153,10 +153,10 @@
 </div>
 
 <div class="tabs" id="tabs" style="display:none">
-  <button class="tab active" onclick="showTab('live')">Live</button>
-  <button class="tab" onclick="showTab('signals')">Signals</button>
-  <button class="tab" onclick="showTab('events')">Events</button>
-  <button class="tab" onclick="showTab('stats')">Stats</button>
+  <button class="tab active" id="tab-live">Live</button>
+  <button class="tab" id="tab-signals">Signals</button>
+  <button class="tab" id="tab-events">Events</button>
+  <button class="tab" id="tab-stats">Stats</button>
 </div>
 
 <div class="panel active" id="panel-live">
@@ -178,9 +178,9 @@
   <div id="stats-list"></div>
 </div>
 
-<div class="footer" id="footer" style="display:none">
-  <button class="btn btn-secondary" onclick="exportSession()">Export JSON</button>
-  <button class="btn btn-danger"    onclick="resetSession()">Reset</button>
+<<div class="footer" id="footer" style="display:none">
+  <button class="btn btn-secondary" id="btn-export">Export JSON</button>
+  <button class="btn btn-danger" id="btn-reset">Reset</button>
 </div>
 
 <script src="popup.js"></script>
